@@ -8,7 +8,7 @@ import {
   getLesson,
   scorePlacement,
 } from "./curriculum.js";
-import { evaluateOutcome, formatScheduledDate, getSelfStudyCycle, getSelfStudyPlan, weekDateRange } from "./planner.js";
+import { evaluateOutcome, formatScheduledDate, getSelfStudyCycle, getSelfStudyPlan, scheduledDateForDay, weekDateRange } from "./planner.js";
 import {
   addMistake,
   addReviewItem,
@@ -52,6 +52,10 @@ const ui = {
   placementIndex: 0,
   placementAnswers: {},
   placementResult: null,
+  assessmentActive: false,
+  assessmentIndex: 0,
+  assessmentAnswers: {},
+  assessmentResult: null,
   activeTask: "",
   mode: "standard",
   feedback: null,
@@ -105,6 +109,11 @@ function render() {
   document.documentElement.dataset.motion = state.settings.reducedMotion ? "reduced" : "full";
   if (!state.onboarded) {
     app.innerHTML = renderOnboarding();
+    return;
+  }
+
+  if (ui.assessmentActive) {
+    app.innerHTML = renderAssessment();
     return;
   }
 
@@ -227,7 +236,7 @@ function renderScheduleStep() {
           }).join("")}
         </div>
       </div>
-      <label class="field-label" for="reminder-time">希望几点收到学习提醒？<span>会生成日历提醒</span></label>
+      <label class="field-label" for="reminder-time">提醒时间<span>稍后在“我的”添加到系统日历</span></label>
       <input class="text-field time-field" type="time" id="reminder-time" data-field="reminderTime" value="${escapeAttr(ui.onboarding.reminderTime)}">
       <label class="field-label" for="start-date">计划从哪一天开始？<span>这天就是第 1 周第 1 天</span></label>
       <input class="text-field time-field" type="date" id="start-date" data-field="startDate" value="${escapeAttr(ui.onboarding.startDate)}">
@@ -304,6 +313,47 @@ function renderPlacementResult() {
   `;
 }
 
+function renderAssessment() {
+  if (ui.assessmentResult) return renderAssessmentResult();
+  const question = PLACEMENT_QUESTIONS[ui.assessmentIndex];
+  const selected = ui.assessmentAnswers[question.id];
+  return `
+    <main class="activity-shell assessment-screen">
+      <header class="activity-header"><button class="icon-button" data-action="assessment-close" aria-label="退出测评">${icon("close")}</button><div><small>当前水平</small><b>水平测评</b></div><span class="activity-step">${ui.assessmentIndex + 1}/${PLACEMENT_QUESTIONS.length}</span></header>
+      <div class="activity-progress"><span style="width:${((ui.assessmentIndex + 1) / PLACEMENT_QUESTIONS.length) * 100}%"></span></div>
+      <section class="activity-content">
+        <div class="question-meta"><span>${question.category}</span><i>·</i><span>${question.level}</span></div>
+        ${question.speak ? `<button class="listen-orb small" data-action="speak-text" data-text="${escapeAttr(question.speak)}">${icon("volume")}<span>播放句子</span></button>` : ""}
+        <h1 class="question-title">${question.prompt}</h1>
+        <div class="choice-list">${question.choices.map((choice, index) => `<button class="choice-button ${Number(selected) === index ? "selected" : ""}" data-action="assessment-answer" data-answer="${index}"><span>${String.fromCharCode(65 + index)}</span><b>${choice}</b><i>${icon("check")}</i></button>`).join("")}</div>
+        <div class="test-actions"><button class="text-button" data-action="assessment-skip">跳过</button>${ui.assessmentIndex ? `<button class="text-button" data-action="assessment-prev">上一题</button>` : ""}<button class="primary-button" data-action="assessment-next" ${selected === undefined ? "disabled" : ""}>${ui.assessmentIndex === PLACEMENT_QUESTIONS.length - 1 ? "查看结果" : "下一题"}</button></div>
+      </section>
+      ${ui.toast ? `<div class="toast" role="status">${escapeHTML(ui.toast)}</div>` : ""}
+    </main>`;
+}
+
+function renderAssessmentResult() {
+  const result = ui.assessmentResult;
+  const snapshot = assessmentSnapshot();
+  const change = snapshot.latest ? result.percent - snapshot.latest.percent : null;
+  return `
+    <main class="activity-shell assessment-screen"><header class="activity-header"><button class="icon-button" data-action="assessment-close">${icon("close")}</button><div><small>测评完成</small><b>本次结果</b></div><span class="activity-step">${result.level}</span></header>
+      <section class="activity-content assessment-result">
+        <div class="result-badge"><span>${result.level}</span><small>${result.percent}%</small></div>
+        <div class="activity-intro"><span class="eyebrow">本次基线</span><h1>答对 ${result.total}/${result.max} 题</h1><p>${change === null ? "保存后，以后的测评会和本次对比。" : `较上次 ${change >= 0 ? "提升" : "下降"} ${Math.abs(change)} 个百分点。`}</p></div>
+        <div class="score-grid">${Object.entries(result.categories).map(([name, score]) => { const percent = Math.round((score[0] / score[1]) * 100); return `<div><span>${name}</span><b>${percent}%</b><i><em style="width:${percent}%"></em></i></div>`; }).join("")}</div>
+        <div class="sticky-action"><button class="primary-button wide" data-action="save-assessment">保存本次结果</button></div>
+      </section>
+    </main>`;
+}
+
+function assessmentSnapshot() {
+  const history = Array.isArray(state.profile.assessmentHistory) ? state.profile.assessmentHistory : [];
+  const latest = history.at(-1) || (state.profile.placement?.completedAt ? state.profile.placement : null);
+  const previous = history.length > 1 ? history.at(-2) : null;
+  return { history, latest, previous, delta: latest && previous ? latest.percent - previous.percent : null };
+}
+
 function renderAppHeader() {
   const greeting = greetingForHour();
   const displayName = state.profile.name ? `，${escapeHTML(state.profile.name)}` : "";
@@ -344,13 +394,15 @@ function renderHome() {
   const todayRecord = state.course.selfStudyRecords?.[plan.id];
   const todayProgress = plan.tasks.filter((task) => todayRecord?.tasks?.[task.key]).length;
   const unresolved = Object.values(state.course.selfStudyRecords || {}).filter((record) => record.questions?.trim() && !record.questionsResolved).length;
+  const assessment = assessmentSnapshot();
   return `<section class="home-view">
     <article class="home-welcome"><small>${formatScheduledDate(state.profile.startDate || state.course.startDate, state.profile.studyDays, state.course.currentDay)}</small><h1>${state.profile.name ? `${escapeHTML(state.profile.name)}，` : ""}今天继续一点</h1><p>第 ${plan.cycleNumber} 周期 · 第 ${plan.weekNumber} 周 · ${plan.weekTitle}</p><div class="home-cycle-progress"><i><span style="width:${cyclePercent}%"></span></i><small>本周期 ${cyclePercent}%</small></div></article>
     <div class="home-metrics"><div><span>🔥</span><b>${state.stats.streak}</b><small>连续天数</small></div><div><span>✓</span><b>${weekCompleted}/5</b><small>本周打卡</small></div><div><span>⏱</span><b>${state.stats.totalMinutes}</b><small>累计分钟</small></div></div>
+    <button class="level-snapshot" data-action="start-assessment"><span>${icon("target")}</span><div><small>当前水平</small><b>${assessment.latest ? `${assessment.latest.level} · ${assessment.latest.percent}%` : "还没有基线"}</b><em>${assessment.latest ? `${formatDateTime(assessment.latest.completedAt)}${assessment.delta === null ? "" : ` · ${assessment.delta >= 0 ? "+" : ""}${assessment.delta}%`}` : "完成 24 题，之后可重复对比"}</em></div><i>${assessment.latest ? "重新测评" : "开始测评"} ${icon("chevron-right")}</i></button>
     <div class="section-heading"><div><span>开始学习</span><small>一条主线，一个工具箱</small></div></div>
     <div class="home-entry-grid">
-      <button class="home-entry primary" data-nav="today"><span>${icon("map")}</span><small>主要任务</small><h2>自学打卡</h2><p>今天：${plan.title}</p><i>${todayProgress}/${plan.tasks.length} 项 ${icon("chevron-right")}</i></button>
-      <button class="home-entry" data-nav="training"><span>${icon("cards")}</span><small>按需使用</small><h2>专项训练</h2><p>听力、词汇、跟读、口语和小测</p><i>进入工具箱 ${icon("chevron-right")}</i></button>
+      <button class="home-entry primary" data-nav="today"><span>${icon("map")}</span><div><small>主要任务</small><h2>自学打卡</h2><p>今天：${plan.title}</p></div><i>${todayProgress}/${plan.tasks.length} 项 ${icon("chevron-right")}</i></button>
+      <button class="home-entry" data-nav="training"><span>${icon("cards")}</span><div><small>按需使用</small><h2>专项训练</h2><p>听力、词汇、跟读、口语和小测</p></div><i>进入工具箱 ${icon("chevron-right")}</i></button>
     </div>
     <article class="home-week-card"><div><small>本周进度 · ${weekDateRange(state.profile.startDate || state.course.startDate, state.profile.studyDays, Math.floor(state.course.currentDay / 5))}</small><h2>${plan.weekTitle}</h2><p>${plan.weekOutcome}</p></div><div class="day-dots">${[0,1,2,3,4].map((day) => `<i class="${day < weekCompleted ? "done" : day === plan.dayInWeek - 1 ? "current" : ""}">${day < weekCompleted ? icon("check") : day + 1}</i>`).join("")}</div><button class="secondary-button" data-action="open-outcome" data-week="${latestWeek}">${latestWeekCompleted >= 5 ? `${state.course.outcomes?.[`week-${latestWeek + 1}`]?.submittedAt ? "查看或更新" : "提交"}第 ${latestWeek + 1} 周成果` : `完成 ${5 - latestWeekCompleted} 天后提交成果`}</button></article>
     ${unresolved ? `<button class="question-reminder" data-nav="records">${icon("search")}<span><b>${unresolved} 个问题还没解决</b><small>去学习记录中继续核对</small></span>${icon("chevron-right")}</button>` : ""}
@@ -369,7 +421,7 @@ function renderTraining() {
   const weekTestDue = lesson.dayInWeek === 1 && lesson.weekNumber > 1 && !state.training.weeklyTests[lesson.weekNumber - 1];
   const markup = `
     <section class="today-view training-view">
-      <article class="training-intro"><span>${icon("cards")}</span><div><small>专项训练工具箱</small><h1>哪里薄弱，练哪里</h1><p>这些练习不改变自学计划进度，完成后会计入总学习数据。</p></div></article>
+      <article class="training-intro"><span>${icon("cards")}</span><div><small>专项训练</small><h1>哪里薄弱，练哪里</h1><p>按需练习，不影响自学打卡进度。</p></div></article>
       ${weekTestDue ? renderWeekTestBanner(lesson.weekNumber - 1) : ""}
       <div class="lesson-hero">
         <div class="hero-topline">
@@ -383,6 +435,8 @@ function renderTraining() {
         </div>
         <div class="hero-leaf" aria-hidden="true">${leafIllustration()}</div>
       </div>
+
+      <div class="training-set-summary"><span><b>本组内容</b><small>3 道听力 · ${lesson.words.length} 张词汇卡 · ${lesson.quiz.length} 道小测</small></span><button data-action="change-training-set">换一组</button></div>
 
       ${ui.mode === "minimum" ? `
         <div class="minimum-note">${icon("bolt")}<span><b>今天很忙？完成最低任务也算坚持。</b><small>10 分钟模式记录学习，但不推进正式课程天数。</small></span></div>
@@ -398,7 +452,6 @@ function renderTraining() {
           <span>🌱</span><div><b>${ui.mode === "standard" ? "今天的学习完成了！" : "保住了今天的节奏！"}</b><small>${ui.mode === "standard" ? "把新表达带进真实生活吧。" : "有时间时再回来完成标准计划。"}</small></div>
           <button class="primary-button" data-action="complete-day">${ui.mode === "standard" ? "完成并继续" : "记录 10 分钟"}</button>
         </div>` : ""}
-      <blockquote class="daily-quote">“Small steps still move you forward.”<span>小步也在向前。</span></blockquote>
     </section>`;
   return markup;
 }
@@ -406,13 +459,14 @@ function renderTraining() {
 function renderSelfStudyToday() {
   const plan = getSelfStudyPlan(state.course.currentDay, state.profile.goal, state.profile.dailyMinutes);
   const record = getSelfStudyRecord(plan.id);
+  record.planTitle = plan.title;
   const completed = plan.tasks.filter((task) => record.tasks?.[task.key]).length;
   const progress = Math.round((completed / plan.tasks.length) * 100);
   const allDone = completed === plan.tasks.length;
   const scheduledDate = formatScheduledDate(state.profile.startDate || state.course.startDate, state.profile.studyDays, state.course.currentDay);
   return `
     <section class="today-view self-study-view">
-      <div class="mode-notice">${icon("shield")}<span><b>你掌握教材选择权</b><small>应用只规划学习行动和验收标准，不把内置内容当作唯一正确答案。</small></span><button data-nav="training">专项训练</button></div>
+      <div class="mode-notice">${icon("shield")}<span><b>材料由你选</b><small>这里安排动作和验收标准。</small></span><button data-nav="training">专项训练</button></div>
       <div class="lesson-hero self-hero">
         <div class="hero-topline"><span>第 ${plan.cycleNumber} 周期 · 第 ${plan.weekNumber} 周 · 第 ${plan.dayInWeek} 天</span><em>${scheduledDate}</em></div>
         <h1>${plan.title}</h1>
@@ -421,13 +475,6 @@ function renderSelfStudyToday() {
         <div class="hero-leaf" aria-hidden="true">${leafIllustration()}</div>
       </div>
       <article class="week-objective-card"><small>本周能力目标 · ${weekDateRange(state.profile.startDate || state.course.startDate, state.profile.studyDays, Math.floor(plan.courseDay / 5))}</small><h2>${plan.weekTitle}</h2><p>${plan.weekOutcome}</p><span>建议主题：${plan.guide}</span></article>
-      <article class="source-card">
-        <div class="section-heading"><div><span>今天使用的学习材料</span><small>由你选择，并留下来源方便以后核对</small></div></div>
-        <label>材料名称<input class="text-field" data-self-field="title" value="${escapeAttr(record.source?.title || "")}" placeholder="例如：某个播客第 12 期"></label>
-        <label>出处或作者<input class="text-field" data-self-field="publisher" value="${escapeAttr(record.source?.publisher || "")}" placeholder="例如：BBC Learning English"></label>
-        <label>链接或位置<input class="text-field" data-self-field="url" value="${escapeAttr(record.source?.url || "")}" placeholder="网页链接、书名和页码均可"></label>
-        <p>${icon("info")} ${plan.materialGuide}</p>
-      </article>
       <div class="section-heading"><div><span>今日行动清单</span><small>${state.profile.dailyMinutes} 分钟 · 完成标准写得清清楚楚</small></div><b>${progress}%</b></div>
       <div class="self-task-list">
         ${plan.tasks.map((task, index) => `
@@ -442,8 +489,7 @@ function renderSelfStudyToday() {
         <label>没解决的问题<textarea data-self-field="questions" placeholder="保留疑问，之后可以换资料交叉核对">${escapeHTML(record.questions || "")}</textarea></label>
         <label>下一次要调整什么<textarea data-self-field="nextStep" placeholder="只写一个具体调整就够了">${escapeHTML(record.nextStep || "")}</textarea></label>
       </article>
-      ${allDone ? `<div class="completion-card"><span>✅</span><div><b>今天的自学行动完成了</b><small>材料、来源和你的理解都已经保留。</small></div><button class="primary-button" data-action="complete-self-day">完成打卡并继续</button></div>` : ""}
-      <blockquote class="daily-quote">“Use the app as a map, not as the truth.”<span>把应用当地图，不当唯一答案。</span></blockquote>
+      ${allDone ? `<div class="completion-card"><span>✅</span><div><b>今天的行动完成了</b><small>完成复盘后即可打卡。</small></div><button class="primary-button" data-action="complete-self-day">完成打卡并继续</button></div>` : ""}
     </section>
   `;
 }
@@ -459,9 +505,9 @@ function getSelfStudyRecord(id) {
 
 function renderTaskCard(key, lesson, record, index) {
   const meta = {
-    listen: ["headphones", "精听", "听懂真实语速中的关键句", 8],
-    shadow: ["repeat", "跟读", "模仿节奏，嘴巴先熟起来", 8],
-    words: ["cards", "词汇", `掌握 ${lesson.words.length} 个高频表达`, 8],
+    listen: ["headphones", "精听", "3 道听力题，逐题反馈", 8],
+    shadow: ["repeat", "跟读", "3 句跟读，模仿节奏", 8],
+    words: ["cards", "词汇", `${lesson.words.length} 张高频表达卡`, 8],
     speak: ["mic", "开口", "用自己的信息完成表达", 10],
     quiz: ["check-circle", "小测", "3 题检验，立即得到反馈", 6],
   }[key];
@@ -518,18 +564,21 @@ function withTrainingState(callback) {
 }
 
 function renderListeningTask(lesson) {
-  const selected = ui.taskTemp.listenAnswer;
-  const checked = ui.taskTemp.listenChecked;
+  const set = lesson.listeningSet || [lesson.listening];
+  const itemIndex = Math.min(Number(ui.taskTemp.listenIndex) || 0, set.length - 1);
+  const item = set[itemIndex];
+  const selected = ui.taskTemp.listenAnswers?.[itemIndex];
+  const checked = Boolean(ui.taskTemp.listenChecked?.[itemIndex]);
   return `
-    <div class="activity-intro"><span class="eyebrow">先听，不看英文</span><h1>抓住这句话的<br>主要意思</h1><p>可以重复播放。先听关键词，再选你理解的意思。</p></div>
-    <button class="audio-player" data-action="speak-text" data-text="${escapeAttr(lesson.listening.text)}">
+    <div class="activity-intro inline"><div><span class="eyebrow">先听，不看英文</span><h1>${itemIndex + 1} / ${set.length}</h1></div><p>听关键词，选主要意思。</p></div>
+    <button class="audio-player" data-action="speak-text" data-text="${escapeAttr(item.text)}">
       <span>${icon("volume")}</span><div class="fake-wave">${waveBars(28)}</div><small>0:04</small>
     </button>
     <div class="listen-speed"><span>语速</span>${[0.72, 0.86, 1].map((rate) => `<button class="${Number(state.settings.voiceRate) === rate ? "active" : ""}" data-action="voice-rate" data-rate="${rate}">${rate === 0.72 ? "慢" : rate === 0.86 ? "正常" : "原速"}</button>`).join("")}</div>
-    <h2 class="activity-question">${lesson.listening.prompt}</h2>
+    <h2 class="activity-question">${item.prompt}</h2>
     <div class="choice-list compact">
-      ${lesson.listening.choices.map((choice, index) => {
-        const status = checked ? (index === lesson.listening.answer ? "correct" : Number(selected) === index ? "wrong" : "") : Number(selected) === index ? "selected" : "";
+      ${item.choices.map((choice, index) => {
+        const status = checked ? (index === item.answer ? "correct" : Number(selected) === index ? "wrong" : "") : Number(selected) === index ? "selected" : "";
         return `<button class="choice-button ${status}" data-action="listen-answer" data-answer="${index}" ${checked ? "disabled" : ""}><span>${String.fromCharCode(65 + index)}</span><b>${choice}</b><i>${icon(status === "correct" ? "check" : status === "wrong" ? "close" : "check")}</i></button>`;
       }).join("")}
     </div>
@@ -538,12 +587,10 @@ function renderListeningTask(lesson) {
 }
 
 function renderShadowTask(lesson) {
+  const samples = lesson.shadowSamples || [lesson.sample];
   return `
     <div class="activity-intro"><span class="eyebrow">听一句，跟一句</span><h1>模仿节奏，<br>不追求完美口音</h1><p>先听 2 次，再按住自己的速度说出来。</p></div>
-    <div class="model-sentence">
-      <span>今日句子</span><h2>${lesson.sample.en}</h2><p>${lesson.sample.zh}</p>
-      <button data-action="speak-text" data-text="${escapeAttr(lesson.sample.en)}">${icon("volume")} 播放范读</button>
-    </div>
+    <div class="shadow-sentence-list">${samples.map((sample, index) => `<div class="model-sentence"><span>句子 ${index + 1}</span><h2>${sample.en}</h2><p>${sample.zh}</p><button data-action="speak-text" data-text="${escapeAttr(sample.en)}">${icon("volume")} 播放范读</button></div>`).join("")}</div>
     ${renderRecordPanel(`第${lesson.dayNumber}天跟读`, lesson.courseDay, "shadow")}
     <div class="self-check">
       <span>完成后自己听一遍</span>
@@ -740,7 +787,7 @@ function renderSelfStudyReview() {
       <div class="section-heading"><div><span>学习过程中留下的问题</span><small>解决后可以标记，记录仍会保留</small></div><b>${records.length}</b></div>
       <div class="self-question-list">
         ${records.map((record) => `<article class="self-question-card ${record.questionsResolved ? "resolved" : ""}">
-          <div><small>${escapeHTML(record.source?.publisher || "来源待补充")}</small><h2>${escapeHTML(record.source?.title || "未命名材料")}</h2></div>
+          <div><small>${formatDateTime(record.completedAt || record.createdAt)}</small><h2>${escapeHTML(record.planTitle || record.source?.title || "自学记录")}</h2></div>
           <p>${escapeHTML(record.questions)}</p>
           ${record.nextStep ? `<span>下次调整：${escapeHTML(record.nextStep)}</span>` : ""}
           <button class="secondary-button" data-action="toggle-self-question" data-record-id="${escapeHTML(record.id)}">${record.questionsResolved ? "重新打开" : "标记为已解决"}</button>
@@ -757,12 +804,12 @@ function renderRecords() {
     .filter((record) => record.completedAt)
     .sort((a, b) => b.completedAt.localeCompare(a.completedAt));
   return `<section class="records-view">
-    <div class="records-summary"><div><small>第 ${plan.cycleNumber} 周期 · 第 ${plan.weekNumber} 周</small><h1>学习记录</h1><p>每天的材料、总结、疑问和周期成果都保存在这里。</p></div><span>${state.course.completedDays.length}<small>累计打卡</small></span></div>
+    <div class="records-summary"><div><small>第 ${plan.cycleNumber} 周期 · 第 ${plan.weekNumber} 周</small><h1>学习记录</h1><p>打卡、总结、疑问和周期成果都保存在这里。</p></div><span>${state.course.completedDays.length}<small>累计打卡</small></span></div>
     ${renderSelfStudyReview()}
     <div class="section-heading"><div><span>周期成果</span><small>每完成 5 个学习日可提交一次</small></div><b>${outcomes.length}</b></div>
     <div class="outcome-list">${outcomes.map((item) => `<article class="outcome-result-card"><div><small>第 ${item.weekIndex + 1} 周 · ${formatDateTime(item.submittedAt)}</small><h2>${escapeHTML(item.title)}</h2></div><strong>${item.objectiveScore}<small>完成度</small></strong><p>${escapeHTML(item.feedback)}</p><div class="outcome-tags">${item.wordCount ? `<span>${item.wordCount} 词</span>` : ""}<span>${item.evidenceCount} 项证据</span><span>自评 ${item.selfScore}/3</span></div><div class="outcome-actions"><button data-action="open-outcome" data-week="${item.weekIndex}">查看或修改</button><button data-action="copy-outcome" data-week="${item.weekIndex}">复制给老师或 AI 点评</button></div></article>`).join("") || `<p class="soft-empty">完成一周的 5 个学习日后，就可以提交第一份成果。</p>`}</div>
-    <div class="section-heading"><div><span>最近打卡</span><small>材料与学习总结</small></div><b>${completedRecords.length}</b></div>
-    <div class="learning-log-list">${completedRecords.slice(0,12).map((record) => `<article><span>${icon("check")}</span><div><small>${formatDateTime(record.completedAt)}</small><h2>${escapeHTML(record.source?.title || "未命名材料")}</h2><p>${escapeHTML(record.summary || "")}</p></div></article>`).join("") || `<p class="soft-empty">还没有完成打卡。</p>`}</div>
+    <div class="section-heading"><div><span>最近打卡</span><small>学习总结</small></div><b>${completedRecords.length}</b></div>
+    <div class="learning-log-list">${completedRecords.slice(0,12).map((record) => `<article><span>${icon("check")}</span><div><small>${formatDateTime(record.completedAt)}</small><h2>${escapeHTML(record.planTitle || record.source?.title || "自学记录")}</h2><p>${escapeHTML(record.summary || "")}</p></div></article>`).join("") || `<p class="soft-empty">还没有完成打卡。</p>`}</div>
   </section>`;
 }
 
@@ -822,15 +869,21 @@ function renderProgress() {
 
 function renderProfile() {
   const goal = GOALS[state.profile.goal];
+  const assessment = assessmentSnapshot();
+  const assessmentHistory = assessment.history.slice(-3).reverse();
   return `
     <section class="profile-view">
       <div class="profile-card"><div class="avatar">${escapeHTML((state.profile.name || "E").slice(0, 1).toUpperCase())}</div><div><h1>${escapeHTML(state.profile.name || "英语学习者")}</h1><p>自学打卡 · ${goal.name} · 第 ${Math.floor((state.course.currentDay % 60) / 5) + 1} 周</p></div><button class="icon-button" data-action="edit-profile">${icon("edit")}</button></div>
+      <div class="settings-group"><h2>水平测评 <span>${assessment.history.length} 次记录</span></h2>
+        <article class="assessment-profile-card ${assessmentHistory.length ? "" : "no-history"}"><div><small>当前基线</small><b>${assessment.latest ? `${assessment.latest.level} · ${assessment.latest.percent}%` : "尚未测评"}</b><span>${assessment.delta === null ? "完成后可持续对比" : `较上次 ${assessment.delta >= 0 ? "+" : ""}${assessment.delta}%`}</span></div><button data-action="start-assessment">${assessment.latest ? "重新测评" : "开始测评"}</button></article>
+        ${assessmentHistory.length ? `<div class="assessment-history">${assessmentHistory.map((item, index) => `<div><span>${formatDateTime(item.completedAt)}</span><b>${item.level}</b><em>${item.percent}%${index < assessmentHistory.length - 1 ? ` · ${item.percent - assessmentHistory[index + 1].percent >= 0 ? "+" : ""}${item.percent - assessmentHistory[index + 1].percent}%` : ""}</em></div>`).join("")}</div>` : ""}
+      </div>
       <div class="settings-group"><h2>学习设置</h2>
         <button class="setting-row" data-action="change-goal"><span>${icon("target")}</span><div><b>学习路线</b><small>${goal.name}</small></div>${icon("chevron-right")}</button>
         <button class="setting-row" data-action="change-start-date"><span>${icon("calendar")}</span><div><b>计划开始日期</b><small>${state.profile.startDate || state.course.startDate} · 当前周从这天滚动计算</small></div>${icon("chevron-right")}</button>
         <label class="setting-row"><span>${icon("volume")}</span><div><b>范读声音</b><small>浏览器自带英语语音</small></div><input class="switch" type="checkbox" data-setting="sound" ${state.settings.sound ? "checked" : ""}></label>
         <label class="setting-row"><span>${icon("spark")}</span><div><b>减少动画</b><small>更安静的页面效果</small></div><input class="switch" type="checkbox" data-setting="reducedMotion" ${state.settings.reducedMotion ? "checked" : ""}></label>
-        <button class="setting-row" data-action="download-calendar"><span>${icon("calendar")}</span><div><b>添加日历提醒</b><small>${state.profile.reminderTime} · 每周 ${state.profile.studyDays.length} 天</small></div>${icon("download")}</button>
+        <button class="setting-row" data-action="download-calendar"><span>${icon("calendar")}</span><div><b>添加到系统日历</b><small>${state.profile.calendarAddedAt ? "已生成，可再次添加" : `${state.profile.reminderTime} · 每周 ${state.profile.studyDays.length} 天`}</small></div>${icon("download")}</button>
       </div>
       <div class="settings-group"><h2>安装与离线</h2>
         <button class="setting-row" data-action="install-app"><span>${icon("phone")}</span><div><b>添加到手机主屏幕</b><small>${ui.installable ? "点击即可安装" : "像普通 App 一样打开"}</small></div>${icon("chevron-right")}</button>
@@ -953,12 +1006,30 @@ async function handleClick(event) {
     render(); return;
   }
   if (action === "finish-onboarding") { finishOnboarding(); return; }
+  if (action === "start-assessment") { startAssessment(); return; }
+  if (action === "assessment-close") { closeAssessment(); return; }
+  if (action === "assessment-answer") {
+    const question = PLACEMENT_QUESTIONS[ui.assessmentIndex];
+    ui.assessmentAnswers[question.id] = Number(target.dataset.answer); render(); return;
+  }
+  if (action === "assessment-prev") { ui.assessmentIndex = Math.max(0, ui.assessmentIndex - 1); render(); return; }
+  if (action === "assessment-skip") { nextAssessment(true); return; }
+  if (action === "assessment-next") { nextAssessment(false); return; }
+  if (action === "save-assessment") { saveAssessment(); return; }
   if (action === "toggle-mode") { ui.mode = ui.mode === "standard" ? "minimum" : "standard"; render(); return; }
+  if (action === "change-training-set") {
+    state.training.currentDay = (Number(state.training.currentDay) + 1) % 60;
+    saveState(state); resetTaskUI(); render(); window.scrollTo(0, 0); return;
+  }
   if (action === "start-task") { openTask(target.dataset.task); return; }
   if (action === "close-task") { await cleanRecording(); ui.activeTask = ""; resetTaskUI(); render(); return; }
   if (action === "speak-text") { speak(target.dataset.text, Number(target.dataset.rate) || state.settings.voiceRate); return; }
   if (action === "voice-rate") { state.settings.voiceRate = Number(target.dataset.rate); saveState(state); render(); return; }
-  if (action === "listen-answer") { ui.taskTemp.listenAnswer = Number(target.dataset.answer); render(); return; }
+  if (action === "listen-answer") {
+    const index = Number(ui.taskTemp.listenIndex) || 0;
+    if (!ui.taskTemp.listenAnswers) ui.taskTemp.listenAnswers = {};
+    ui.taskTemp.listenAnswers[index] = Number(target.dataset.answer); render(); return;
+  }
   if (action === "check-listen") { checkListening(); return; }
   if (action === "reveal-word") { if (!ui.wordRevealed) { ui.wordRevealed = true; render(); } return; }
   if (action === "rate-word") { rateWord(target.dataset.rating); return; }
@@ -1005,7 +1076,7 @@ async function handleClick(event) {
   if (action === "delete-recording") { removeSavedRecording(target.dataset.recordingId); return; }
   if (action === "export-backup") { downloadBackup(); return; }
   if (action === "import-backup") { document.querySelector("#backup-file")?.click(); return; }
-  if (action === "download-calendar") { downloadCalendar(); return; }
+  if (action === "download-calendar") { await addCalendarReminder(); return; }
   if (action === "install-app") { installApp(); return; }
   if (action === "reset-progress") { resetProgress(); return; }
   if (action === "change-goal") { changeGoal(); return; }
@@ -1082,8 +1153,47 @@ function nextPlacement(skipped) {
   render();
 }
 
+function startAssessment() {
+  ui.assessmentActive = true;
+  ui.assessmentIndex = 0;
+  ui.assessmentAnswers = {};
+  ui.assessmentResult = null;
+  render();
+  window.scrollTo(0, 0);
+}
+
+function closeAssessment() {
+  ui.assessmentActive = false;
+  ui.assessmentResult = null;
+  render();
+}
+
+function nextAssessment(skipped) {
+  const question = PLACEMENT_QUESTIONS[ui.assessmentIndex];
+  if (skipped) ui.assessmentAnswers[question.id] = -1;
+  if (ui.assessmentIndex < PLACEMENT_QUESTIONS.length - 1) ui.assessmentIndex += 1;
+  else ui.assessmentResult = scorePlacement(ui.assessmentAnswers);
+  render();
+}
+
+function saveAssessment() {
+  const result = ui.assessmentResult || scorePlacement(ui.assessmentAnswers);
+  const entry = { ...result, id: `assessment-${Date.now()}`, completedAt: new Date().toISOString() };
+  const assessmentHistory = Array.isArray(state.profile.assessmentHistory) ? state.profile.assessmentHistory : [];
+  state.profile.assessmentHistory = [...assessmentHistory, entry].slice(-12);
+  state.profile.placement = entry;
+  state.profile.level = entry.level;
+  saveState(state);
+  ui.assessmentActive = false;
+  ui.assessmentResult = null;
+  ui.nav = "profile";
+  history.replaceState(null, "", "#profile");
+  toast("测评结果已保存");
+}
+
 function finishOnboarding() {
   const result = ui.placementResult || scorePlacement(ui.placementAnswers);
+  const assessment = { ...result, id: `assessment-${Date.now()}`, completedAt: new Date().toISOString() };
   state.profile = {
     ...state.profile,
     name: ui.onboarding.name.trim(),
@@ -1094,7 +1204,8 @@ function finishOnboarding() {
     studyDays: ui.onboarding.studyDays,
     reminderTime: ui.onboarding.reminderTime,
     startDate: ui.onboarding.startDate || localDateKey(),
-    placement: result,
+    placement: assessment,
+    assessmentHistory: [...(state.profile.assessmentHistory || []), assessment].slice(-12),
   };
   state.course.startDate = state.profile.startDate;
   state.onboarded = true;
@@ -1145,18 +1256,22 @@ function resetTaskUI() {
 
 function checkListening() {
   const lesson = currentLesson();
-  const correct = Number(ui.taskTemp.listenAnswer) === lesson.listening.answer;
-  ui.taskTemp.listenChecked = true;
+  const set = lesson.listeningSet || [lesson.listening];
+  const index = Math.min(Number(ui.taskTemp.listenIndex) || 0, set.length - 1);
+  const item = set[index];
+  const correct = Number(ui.taskTemp.listenAnswers?.[index]) === item.answer;
+  if (!ui.taskTemp.listenChecked) ui.taskTemp.listenChecked = {};
+  ui.taskTemp.listenChecked[index] = true;
   if (!correct) {
-    addMistake(state, { prompt: lesson.listening.prompt, answer: lesson.listening.choices[lesson.listening.answer], explanation: `${lesson.listening.text} · ${lesson.sample.zh}` });
+    addMistake(state, { prompt: item.prompt, answer: item.choices[item.answer], explanation: item.explanation });
     saveState(state);
   }
   ui.feedback = {
     correct,
     title: correct ? "你抓住了主要意思" : "关键词会带你找到答案",
-    detail: `${lesson.listening.text} — ${lesson.sample.zh}`,
-    button: "听懂了，继续",
-    next: "complete-listen",
+    detail: item.explanation,
+    button: index === set.length - 1 ? "完成精听" : "下一题",
+    next: index === set.length - 1 ? "complete-listen" : "advance-listen",
   };
   render();
 }
@@ -1164,6 +1279,10 @@ function checkListening() {
 function continueFromFeedback() {
   const next = ui.feedback?.next;
   ui.feedback = null;
+  if (next === "advance-listen") {
+    ui.taskTemp.listenIndex = (Number(ui.taskTemp.listenIndex) || 0) + 1;
+    render(); return;
+  }
   if (next === "complete-listen") return completeTask("listen");
   if (next === "complete-quiz") return completeTask("quiz");
   render();
@@ -1289,8 +1408,8 @@ function completeDay() {
 function completeSelfStudyDay() {
   const plan = getSelfStudyPlan(state.course.currentDay, state.profile.goal, state.profile.dailyMinutes);
   const record = getSelfStudyRecord(plan.id);
+  record.planTitle = plan.title;
   if (!plan.tasks.every((task) => record.tasks?.[task.key])) return toast("请先完成今天的行动清单");
-  if (!record.source?.title?.trim()) return toast("请先记录今天使用的材料名称");
   if (!record.summary?.trim()) return toast("请先用自己的话写下今天的学习总结");
   if (state.course.completedDays.includes(state.course.currentDay)) return toast("这个学习日已经打卡");
   record.completedAt = new Date().toISOString();
@@ -1532,23 +1651,39 @@ async function importBackupFile(file) {
   }
 }
 
-function downloadCalendar() {
+async function addCalendarReminder() {
   const [hour, minute] = state.profile.reminderTime.split(":").map(Number);
   const chosenStart = state.profile.startDate || state.course.startDate || localDateKey();
-  const start = new Date(`${chosenStart}T12:00:00`);
+  let courseDay = Math.max(0, Number(state.course.currentDay) || 0);
+  let start = scheduledDateForDay(chosenStart, state.profile.studyDays, courseDay) || new Date(`${chosenStart}T12:00:00`);
   start.setHours(hour, minute, 0, 0);
-  if (start < new Date()) start.setDate(start.getDate() + 1);
+  while (start < new Date() && courseDay < state.course.currentDay + 800) {
+    courseDay += 1;
+    start = scheduledDateForDay(chosenStart, state.profile.studyDays, courseDay);
+    start.setHours(hour, minute, 0, 0);
+  }
   const end = new Date(start.getTime() + (state.profile.dailyMinutes || 40) * 60000);
   const byDays = state.profile.studyDays.map((day) => ["SU", "MO", "TU", "WE", "TH", "FR", "SA"][day % 7]).join(",");
   const formatICS = (date) => `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}T${String(date.getHours()).padStart(2, "0")}${String(date.getMinutes()).padStart(2, "0")}00`;
   const ics = [
-    "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Echo//Study Plan//ZH", "CALSCALE:GREGORIAN",
+    "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Echo//Study Plan//ZH", "CALSCALE:GREGORIAN", "METHOD:PUBLISH", "X-WR-CALNAME:Echo",
     "BEGIN:VEVENT", `UID:echo-${Date.now()}@local`, `DTSTART:${formatICS(start)}`, `DTEND:${formatICS(end)}`,
-    `RRULE:FREQ=WEEKLY;BYDAY=${byDays}${state.profile.learningMode === "self" ? "" : ";COUNT=60"}`, "SUMMARY:Echo · 今日英语", "DESCRIPTION:每天一点，真的开口。打开学习页面完成今天的任务。",
-    "BEGIN:VALARM", "TRIGGER:-PT5M", "ACTION:DISPLAY", "DESCRIPTION:今天的英语时间到了", "END:VALARM", "END:VEVENT", "END:VCALENDAR",
+    `RRULE:FREQ=WEEKLY;BYDAY=${byDays}`, "SUMMARY:Echo · 今日计划", "DESCRIPTION:打开 Echo，完成今天的学习行动和复盘。",
+    "BEGIN:VALARM", "TRIGGER:-PT5M", "ACTION:DISPLAY", "DESCRIPTION:今天的学习时间到了", "END:VALARM", "END:VEVENT", "END:VCALENDAR",
   ].join("\r\n");
-  downloadBlob(ics, "echo-reminder.ics", "text/calendar;charset=utf-8");
-  toast("日历文件已生成，请用系统日历打开");
+  const file = new File([ics], "echo-reminder.ics", { type: "text/calendar;charset=utf-8" });
+  try {
+    if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
+      await navigator.share({ title: "Echo 学习提醒", files: [file] });
+    } else {
+      downloadBlob(ics, file.name, file.type);
+    }
+    state.profile.calendarAddedAt = new Date().toISOString();
+    saveState(state);
+    toast("已生成日历事件，请在系统日历中确认");
+  } catch (error) {
+    if (error?.name !== "AbortError") toast("无法打开系统日历，请稍后重试");
+  }
 }
 
 async function installApp() {
@@ -1655,7 +1790,16 @@ function taskProgress() {
     const lesson = currentLesson();
     return ((ui.wordIndex + (ui.wordRevealed ? 0.5 : 0)) / lesson.words.length) * 100;
   }
-  if (ui.activeTask === "quiz") return ((ui.quizIndex + 1) / 3) * 100;
+  if (ui.activeTask === "listen") {
+    const lesson = currentLesson();
+    const total = (lesson.listeningSet || [lesson.listening]).length;
+    const index = Number(ui.taskTemp.listenIndex) || 0;
+    return ((index + (ui.taskTemp.listenChecked?.[index] ? 1 : 0)) / total) * 100;
+  }
+  if (ui.activeTask === "quiz") {
+    const lesson = currentLesson();
+    return ((ui.quizIndex + 1) / lesson.quiz.length) * 100;
+  }
   return 40;
 }
 

@@ -17,6 +17,8 @@ export function createDefaultState() {
       reminderTime: "20:30",
       startDate: "",
       placement: null,
+      assessmentHistory: [],
+      calendarAddedAt: "",
     },
     course: {
       currentDay: 0,

@@ -1,5 +1,5 @@
-const CACHE_NAME = "echo-v6-brand";
-const CORE_FILES = ["./", "./manifest.webmanifest", "./icons/icon.svg", "./icons/apple-touch-icon.svg"];
+const CACHE_NAME = "echo-v7-learning";
+const CORE_FILES = ["./", "./manifest.webmanifest", "./icons/icon.svg", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(CORE_FILES)));

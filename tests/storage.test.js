@@ -8,6 +8,8 @@ test("默认数据结构适合无账号本地使用", () => {
   assert.equal(state.profile.goal, "daily");
   assert.equal(state.course.currentDay, 0);
   assert.deepEqual(state.course.completedDays, []);
+  assert.deepEqual(state.profile.assessmentHistory, []);
+  assert.equal(state.profile.calendarAddedAt, "");
 });
 
 test("连续学习天数计算正确", () => {

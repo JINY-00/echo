@@ -13,11 +13,12 @@ test("自学打卡每 60 天进入新周期但不会结束", () => {
   assert.equal(next.weekNumber, 1);
   assert.equal(far.cycleNumber, 11);
   assert.equal(first.tasks.length, 4);
-  assert.equal(first.title, "背单词与词组");
-  assert.equal(getSelfStudyPlan(1).title, "听一段演讲或播客");
-  assert.equal(getSelfStudyPlan(2).title, "看一段英文电视剧");
-  assert.equal(getSelfStudyPlan(3).title, "读文章并学一个语法点");
-  assert.equal(getSelfStudyPlan(4).title, "口语输出与周复习");
+  assert.equal(first.title, "听读热身与表达");
+  assert.equal(getSelfStudyPlan(1).title, "精听与跟读");
+  assert.equal(getSelfStudyPlan(2).title, "场景输入与开口");
+  assert.equal(getSelfStudyPlan(3).title, "阅读与短写作");
+  assert.equal(getSelfStudyPlan(4).title, "复测与成果整理");
+  assert.equal(first.tasks.filter((task) => /词|表达/.test(task.title)).length, 1);
   assert.equal(getSelfStudyCycle("travel", 2).length, 12);
 });
 

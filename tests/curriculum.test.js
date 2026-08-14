@@ -23,6 +23,9 @@ test("三条路线都包含 12 周、60 个可用学习日", () => {
       assert.ok(lesson.week.vocab.length >= 6);
       assert.equal(lesson.words.length, 4);
       assert.equal(lesson.quiz.length, 3);
+      assert.equal(lesson.listeningSet.length, 3);
+      assert.equal(lesson.shadowSamples.length, 3);
+      lesson.listeningSet.forEach((question) => assert.ok(question.answer >= 0 && question.answer < question.choices.length));
       assert.ok(lesson.sample.en.length > 8);
       for (const question of lesson.quiz) {
         if (question.type === "choice" && question.answer !== undefined) {

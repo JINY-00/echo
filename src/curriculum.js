@@ -418,11 +418,21 @@ export function getLesson(goal = "daily", courseDay = 0, level = "A1") {
   const words = Array.from({ length: wordCount }, (_, index) => week.vocab[(dayIndex * 2 + index) % week.vocab.length]);
   const otherMeanings = week.vocab.filter((item) => item.term !== words[0].term).slice(0, 3).map((item) => item.meaning);
   const meaningChoices = shuffleStable([words[0].meaning, ...otherMeanings], safeDay + goal.length);
-  const listeningChoices = shuffleStable([
-    sample.zh,
-    nextSample.zh,
-    adaptSample(week, (dayIndex + 2) % 5, safeLevel).zh,
-  ], safeDay + 11);
+  const listeningSamples = [0, 1, 2].map((offset) => adaptSample(week, (dayIndex + offset) % 5, safeLevel));
+  const listeningSet = listeningSamples.map((item, index) => {
+    const distractors = [1, 2, 3]
+      .map((offset) => adaptSample(week, (dayIndex + index + offset) % 5, safeLevel).zh)
+      .filter((meaning) => meaning !== item.zh);
+    const choices = shuffleStable([item.zh, ...distractors].slice(0, 4), safeDay + 11 + index * 17);
+    return {
+      id: `listen-${safeDay + 1}-${index + 1}`,
+      text: item.en,
+      prompt: index === 0 ? "这句话表达的意思是？" : "你听到的关键信息是？",
+      choices,
+      answer: choices.indexOf(item.zh),
+      explanation: `${item.en} — ${item.zh}`,
+    };
+  });
   const missingWord = pickAnswerWord(sample.en, week.vocab);
   return {
     id: `${goal}-${safeLevel}-${safeDay + 1}`,
@@ -437,12 +447,9 @@ export function getLesson(goal = "daily", courseDay = 0, level = "A1") {
     sample,
     nextSample,
     words,
-    listening: {
-      text: sample.en,
-      prompt: "这句话表达的意思是？",
-      choices: listeningChoices,
-      answer: listeningChoices.indexOf(sample.zh),
-    },
+    listening: listeningSet[0],
+    listeningSet,
+    shadowSamples: listeningSamples,
     speaking: {
       prompt: speakingPrompt(dayIndex, week, sample),
       model: sample.en,

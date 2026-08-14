@@ -411,21 +411,37 @@ export function getLesson(goal = "daily", courseDay = 0, level = "A1") {
   const safeLevel = ["A1", "A2", "B1"].includes(level) ? level : "A1";
   const weekIndex = Math.floor(safeDay / 5);
   const dayIndex = safeDay % 5;
-  const week = COURSE[goal]?.[weekIndex] || COURSE.daily[weekIndex];
+  const goalCourse = COURSE[goal] || COURSE.daily;
+  const week = goalCourse[weekIndex];
   const sample = adaptSample(week, dayIndex, safeLevel);
   const nextSample = adaptSample(week, (dayIndex + 1) % 5, safeLevel);
-  const wordCount = safeLevel === "A1" ? 4 : safeLevel === "A2" ? 5 : 6;
-  const words = Array.from({ length: wordCount }, (_, index) => week.vocab[(dayIndex * 2 + index) % week.vocab.length]);
-  const otherMeanings = week.vocab.filter((item) => item.term !== words[0].term).slice(0, 3).map((item) => item.meaning);
-  const meaningChoices = shuffleStable([words[0].meaning, ...otherMeanings], safeDay + goal.length);
-  const listeningSamples = [0, 1, 2].map((offset) => adaptSample(week, (dayIndex + offset) % 5, safeLevel));
+  const wordCount = safeLevel === "A1" ? 8 : safeLevel === "A2" ? 10 : 12;
+  const vocabularyWeeks = [week, goalCourse[(weekIndex + 1) % goalCourse.length], goalCourse[(weekIndex + goalCourse.length - 1) % goalCourse.length]];
+  const vocabularyPool = [...new Map(vocabularyWeeks.flatMap((sourceWeek) => sourceWeek.vocab.map((item) => {
+    const source = sourceWeek.samples.find((candidate) => candidate.en.toLowerCase().includes(item.term.toLowerCase())) || sourceWeek.samples[0];
+    return [item.term.toLowerCase(), { ...item, example: `${source.en} · ${source.zh}` }];
+  })).map(([key, value]) => [key, value])).values()];
+  const words = Array.from({ length: wordCount }, (_, index) => vocabularyPool[(dayIndex * 3 + index) % vocabularyPool.length]);
+  const listeningSamples = Array.from({ length: 6 }, (_, offset) => adaptSample(week, (dayIndex + offset) % 5, safeLevel));
   const listeningSet = listeningSamples.map((item, index) => {
+    if (index >= 4) {
+      const missing = pickAnswerWord(item.en, week.vocab);
+      return {
+        id: `listen-${safeDay + 1}-${index + 1}`,
+        type: "text",
+        text: item.en,
+        prompt: `听完整句子，填出空缺：${missing.prompt}`,
+        answerText: missing.answer,
+        explanation: `${item.en} — ${item.zh}`,
+      };
+    }
     const distractors = [1, 2, 3]
       .map((offset) => adaptSample(week, (dayIndex + index + offset) % 5, safeLevel).zh)
       .filter((meaning) => meaning !== item.zh);
     const choices = shuffleStable([item.zh, ...distractors].slice(0, 4), safeDay + 11 + index * 17);
     return {
       id: `listen-${safeDay + 1}-${index + 1}`,
+      type: "choice",
       text: item.en,
       prompt: index === 0 ? "这句话表达的意思是？" : "你听到的关键信息是？",
       choices,
@@ -433,7 +449,21 @@ export function getLesson(goal = "daily", courseDay = 0, level = "A1") {
       explanation: `${item.en} — ${item.zh}`,
     };
   });
-  const missingWord = pickAnswerWord(sample.en, week.vocab);
+  const quizMeaning = words.slice(0, 4).map((word, index) => {
+    const otherMeanings = words.filter((item) => item.term !== word.term).slice(index + 1, index + 4).map((item) => item.meaning);
+    const choices = shuffleStable([word.meaning, ...otherMeanings], safeDay + 31 + index * 7);
+    return { id: `meaning-${index + 1}`, type: "choice", prompt: `“${word.term}” 的意思是？`, choices, answer: choices.indexOf(word.meaning), explanation: `${word.term}：${word.meaning}` };
+  });
+  const translationSamples = [0, 1, 2].map((offset) => adaptSample(week, (dayIndex + offset) % 5, safeLevel));
+  const quizTranslations = translationSamples.map((item, index) => {
+    const choices = shuffleStable([item.en, ...[1, 2, 3].map((offset) => adaptSample(week, (dayIndex + index + offset) % 5, safeLevel).en).filter((text) => text !== item.en)], safeDay + 79 + index * 11);
+    return { id: `sentence-${index + 1}`, type: "choice", prompt: `哪句话最适合“${item.zh}”？`, choices, answerText: item.en, explanation: item.en };
+  });
+  const quizFills = [2, 3, 4].map((offset, index) => {
+    const item = adaptSample(week, (dayIndex + offset) % 5, safeLevel);
+    const missing = pickAnswerWord(item.en, week.vocab);
+    return { id: `fill-${index + 1}`, type: "text", prompt: missing.prompt, answerText: missing.answer, explanation: item.en };
+  });
   return {
     id: `${goal}-${safeLevel}-${safeDay + 1}`,
     courseDay: safeDay,
@@ -449,36 +479,12 @@ export function getLesson(goal = "daily", courseDay = 0, level = "A1") {
     words,
     listening: listeningSet[0],
     listeningSet,
-    shadowSamples: listeningSamples,
+    shadowSamples: listeningSamples.slice(0, 5),
     speaking: {
       prompt: speakingPrompt(dayIndex, week, sample),
       model: sample.en,
     },
-    quiz: [
-      {
-        id: "meaning",
-        type: "choice",
-        prompt: `“${words[0].term}” 的意思是？`,
-        choices: meaningChoices,
-        answer: meaningChoices.indexOf(words[0].meaning),
-        explanation: `${words[0].term}：${words[0].meaning}`,
-      },
-      {
-        id: "listening",
-        type: "choice",
-        prompt: `哪句话最适合“${nextSample.zh}”？`,
-        choices: shuffleStable([nextSample.en, sample.en, adaptSample(week, (dayIndex + 3) % 5, safeLevel).en], safeDay + 27),
-        answerText: nextSample.en,
-        explanation: nextSample.en,
-      },
-      {
-        id: "fill",
-        type: "text",
-        prompt: missingWord.prompt,
-        answerText: missingWord.answer,
-        explanation: sample.en,
-      },
-    ],
+    quiz: [...quizMeaning, ...quizTranslations, ...quizFills],
   };
 }
 

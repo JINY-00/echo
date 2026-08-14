@@ -36,6 +36,7 @@ let recordingStream = null;
 let recordingStartedAt = 0;
 let recordingTimer = null;
 let activeAudioUrl = "";
+const TRAINING_CONTENT_VERSION = 2;
 
 const ui = {
   nav: "home",
@@ -413,7 +414,7 @@ function renderTraining() {
   const lesson = currentLesson();
   const record = getDayRecord(lesson.id);
   const standardTasks = ["listen", "shadow", "words", "speak", "quiz"];
-  const minimumTasks = ["listen", "speak", "quiz"];
+  const minimumTasks = ["listen", "words"];
   const tasks = ui.mode === "minimum" ? minimumTasks : standardTasks;
   const completed = tasks.filter((key) => record.tasks?.[key]).length;
   const progress = Math.round((completed / tasks.length) * 100);
@@ -421,12 +422,11 @@ function renderTraining() {
   const weekTestDue = lesson.dayInWeek === 1 && lesson.weekNumber > 1 && !state.training.weeklyTests[lesson.weekNumber - 1];
   const markup = `
     <section class="today-view training-view">
-      <article class="training-intro"><span>${icon("cards")}</span><div><small>专项训练</small><h1>哪里薄弱，练哪里</h1><p>按需练习，不影响自学打卡进度。</p></div></article>
       ${weekTestDue ? renderWeekTestBanner(lesson.weekNumber - 1) : ""}
       <div class="lesson-hero">
         <div class="hero-topline">
           <span>专项第 ${lesson.weekNumber} 周 · 第 ${lesson.dayInWeek} 天</span>
-          <button class="mode-toggle" data-action="toggle-mode">${ui.mode === "standard" ? "40 分钟" : "10 分钟"} ${icon("chevron")}</button>
+          <button class="mode-toggle" data-action="toggle-mode">${ui.mode === "standard" ? "完整训练" : "15 分钟"} ${icon("chevron")}</button>
         </div>
         <h1>${lesson.week.title}</h1>
         <p>${lesson.focus.name}：${lesson.focus.hint} ${lesson.levelTip}</p>
@@ -436,21 +436,21 @@ function renderTraining() {
         <div class="hero-leaf" aria-hidden="true">${leafIllustration()}</div>
       </div>
 
-      <div class="training-set-summary"><span><b>本组内容</b><small>3 道听力 · ${lesson.words.length} 张词汇卡 · ${lesson.quiz.length} 道小测</small></span><button data-action="change-training-set">换一组</button></div>
+      <div class="training-set-summary"><span><b>本组训练量</b><small>${lesson.listeningSet.length} 道精听（选择＋听写） · ${lesson.shadowSamples.length} 句跟读 · ${lesson.words.length} 张词汇卡 · ${lesson.quiz.length} 道混合小测</small></span><button data-action="change-training-set">换一组</button></div>
 
       ${ui.mode === "minimum" ? `
-        <div class="minimum-note">${icon("bolt")}<span><b>今天很忙？完成最低任务也算坚持。</b><small>10 分钟模式记录学习，但不推进正式课程天数。</small></span></div>
+        <div class="minimum-note">${icon("bolt")}<span><b>15 分钟精简训练</b><small>完成精听和词汇；不会推进完整训练天数。</small></span></div>
       ` : ""}
 
-      <div class="section-heading"><div><span>今日训练</span><small>${ui.mode === "standard" ? `${state.profile.dailyMinutes} 分钟标准计划` : "10 分钟保底计划"}</small></div><b>${progress}%</b></div>
+      <div class="section-heading"><div><span>今日训练</span><small>${ui.mode === "standard" ? "约 35—45 分钟" : "约 15 分钟"}</small></div><b>${progress}%</b></div>
       <div class="task-list">
         ${tasks.map((key, index) => renderTaskCard(key, lesson, record, index)).join("")}
       </div>
 
       ${allDone ? `
         <div class="completion-card">
-          <span>🌱</span><div><b>${ui.mode === "standard" ? "今天的学习完成了！" : "保住了今天的节奏！"}</b><small>${ui.mode === "standard" ? "把新表达带进真实生活吧。" : "有时间时再回来完成标准计划。"}</small></div>
-          <button class="primary-button" data-action="complete-day">${ui.mode === "standard" ? "完成并继续" : "记录 10 分钟"}</button>
+          <span>🌱</span><div><b>${ui.mode === "standard" ? "本组训练已完成" : "精简训练已完成"}</b><small>${ui.mode === "standard" ? "完成后再进入下一组。" : "有时间时再完成跟读、开口和小测。"}</small></div>
+          <button class="primary-button" data-action="complete-day">${ui.mode === "standard" ? "完成并继续" : "记录 15 分钟"}</button>
         </div>` : ""}
     </section>`;
   return markup;
@@ -481,7 +481,7 @@ function renderSelfStudyToday() {
           <label class="self-task-card ${record.tasks?.[task.key] ? "done" : ""}">
             <input type="checkbox" data-self-task="${task.key}" ${record.tasks?.[task.key] ? "checked" : ""}>
             <i>${record.tasks?.[task.key] ? icon("check") : String(index + 1).padStart(2, "0")}</i>
-            <span><b>${task.title}</b><small>${task.detail}</small><em>验收：${task.evidence}</em></span><strong>${task.minutes} 分钟</strong>
+            <span><b>${task.title}</b><small>${task.detail}</small>${task.tools ? `<u>可用工具：${task.tools}</u>` : ""}<em>验收：${task.evidence}</em></span><strong>${task.minutes} 分钟</strong>
           </label>`).join("")}
       </div>
       <article class="reflection-card">
@@ -505,11 +505,11 @@ function getSelfStudyRecord(id) {
 
 function renderTaskCard(key, lesson, record, index) {
   const meta = {
-    listen: ["headphones", "精听", "3 道听力题，逐题反馈", 8],
-    shadow: ["repeat", "跟读", "3 句跟读，模仿节奏", 8],
-    words: ["cards", "词汇", `${lesson.words.length} 张高频表达卡`, 8],
-    speak: ["mic", "开口", "用自己的信息完成表达", 10],
-    quiz: ["check-circle", "小测", "3 题检验，立即得到反馈", 6],
+    listen: ["headphones", "精听", `${lesson.listeningSet.length} 题：4 题理解＋2 题听写`, 10],
+    shadow: ["repeat", "跟读", `${lesson.shadowSamples.length} 句跟读并录音`, 8],
+    words: ["cards", "词汇", `${lesson.words.length} 张高频表达卡`, 10],
+    speak: ["mic", "开口", "完成引导表达并录音", 8],
+    quiz: ["check-circle", "混合小测", `${lesson.quiz.length} 题：词义、句型与填空`, 10],
   }[key];
   const done = Boolean(record.tasks?.[key]);
   return `
@@ -569,20 +569,22 @@ function renderListeningTask(lesson) {
   const item = set[itemIndex];
   const selected = ui.taskTemp.listenAnswers?.[itemIndex];
   const checked = Boolean(ui.taskTemp.listenChecked?.[itemIndex]);
+  const isText = item.type === "text";
+  const answered = isText ? Boolean(String(selected || "").trim()) : selected !== undefined;
   return `
-    <div class="activity-intro inline"><div><span class="eyebrow">先听，不看英文</span><h1>${itemIndex + 1} / ${set.length}</h1></div><p>听关键词，选主要意思。</p></div>
+    <div class="activity-intro inline"><div><span class="eyebrow">${isText ? "听写填空" : "听力理解"}</span><h1>${itemIndex + 1} / ${set.length}</h1></div><p>${isText ? "先听完整句子，再填写空缺。" : "听关键词，选择主要意思。"}</p></div>
     <button class="audio-player" data-action="speak-text" data-text="${escapeAttr(item.text)}">
       <span>${icon("volume")}</span><div class="fake-wave">${waveBars(28)}</div><small>0:04</small>
     </button>
     <div class="listen-speed"><span>语速</span>${[0.72, 0.86, 1].map((rate) => `<button class="${Number(state.settings.voiceRate) === rate ? "active" : ""}" data-action="voice-rate" data-rate="${rate}">${rate === 0.72 ? "慢" : rate === 0.86 ? "正常" : "原速"}</button>`).join("")}</div>
     <h2 class="activity-question">${item.prompt}</h2>
-    <div class="choice-list compact">
+    ${isText ? `<input class="text-field quiz-input ${checked ? (isListeningCorrect(item, selected) ? "correct" : "wrong") : ""}" data-field="listenText" value="${escapeAttr(selected || "")}" placeholder="输入听到的英文词" ${checked ? "disabled" : ""} autocomplete="off" autocapitalize="none">` : `<div class="choice-list compact">
       ${item.choices.map((choice, index) => {
         const status = checked ? (index === item.answer ? "correct" : Number(selected) === index ? "wrong" : "") : Number(selected) === index ? "selected" : "";
         return `<button class="choice-button ${status}" data-action="listen-answer" data-answer="${index}" ${checked ? "disabled" : ""}><span>${String.fromCharCode(65 + index)}</span><b>${choice}</b><i>${icon(status === "correct" ? "check" : status === "wrong" ? "close" : "check")}</i></button>`;
       }).join("")}
-    </div>
-    <div class="sticky-action"><button class="primary-button wide" data-action="check-listen" ${selected === undefined || checked ? "disabled" : ""}>检查答案</button></div>
+    </div>`}
+    <div class="sticky-action"><button class="primary-button wide" data-action="check-listen" ${!answered || checked ? "disabled" : ""}>检查答案</button></div>
   `;
 }
 
@@ -1133,6 +1135,13 @@ function handleInput(event) {
   const field = input.dataset.field;
   if (!field) return;
   if (["name", "reminderTime", "startDate"].includes(field)) ui.onboarding[field] = input.value;
+  if (field === "listenText") {
+    const index = Number(ui.taskTemp.listenIndex) || 0;
+    if (!ui.taskTemp.listenAnswers) ui.taskTemp.listenAnswers = {};
+    ui.taskTemp.listenAnswers[index] = input.value;
+    const submit = document.querySelector(".sticky-action .primary-button");
+    if (submit) submit.disabled = !input.value.trim();
+  }
   if (field === "quizText") {
     const lesson = currentLesson();
     ui.quizAnswers[lesson.quiz[ui.quizIndex].id] = input.value;
@@ -1259,11 +1268,12 @@ function checkListening() {
   const set = lesson.listeningSet || [lesson.listening];
   const index = Math.min(Number(ui.taskTemp.listenIndex) || 0, set.length - 1);
   const item = set[index];
-  const correct = Number(ui.taskTemp.listenAnswers?.[index]) === item.answer;
+  const selected = ui.taskTemp.listenAnswers?.[index];
+  const correct = isListeningCorrect(item, selected);
   if (!ui.taskTemp.listenChecked) ui.taskTemp.listenChecked = {};
   ui.taskTemp.listenChecked[index] = true;
   if (!correct) {
-    addMistake(state, { prompt: item.prompt, answer: item.choices[item.answer], explanation: item.explanation });
+    addMistake(state, { prompt: item.prompt, answer: item.type === "text" ? item.answerText : item.choices[item.answer], explanation: item.explanation });
     saveState(state);
   }
   ui.feedback = {
@@ -1274,6 +1284,11 @@ function checkListening() {
     next: index === set.length - 1 ? "complete-listen" : "advance-listen",
   };
   render();
+}
+
+function isListeningCorrect(item, answer) {
+  if (item.type === "text") return normalizeText(answer) === normalizeText(item.answerText);
+  return Number(answer) === item.answer;
 }
 
 function continueFromFeedback() {
@@ -1356,9 +1371,9 @@ function finishQuiz() {
   state.training.dayProgress[lesson.id] = record;
   saveState(state);
   ui.feedback = {
-    correct: correct >= 2,
+    correct: correct >= Math.ceil(lesson.quiz.length * 0.7),
     title: `${correct} / ${lesson.quiz.length} 题正确`,
-    detail: correct === 3 ? "今天的重点已经掌握。" : "答错的内容已经放进复习篮，之后会再次出现。",
+    detail: correct === lesson.quiz.length ? "本组重点已经掌握。" : "答错的内容已经放进复习篮，之后会再次出现。",
     button: "完成今日小测",
     next: "complete-quiz",
   };
@@ -1366,8 +1381,15 @@ function finishQuiz() {
 }
 
 function getDayRecord(id) {
-  if (!state.training.dayProgress[id]) {
-    state.training.dayProgress[id] = { tasks: { listen: false, shadow: false, words: false, speak: false, quiz: false }, createdAt: new Date().toISOString() };
+  const existing = state.training.dayProgress[id];
+  if (!existing || existing.contentVersion !== TRAINING_CONTENT_VERSION) {
+    state.training.dayProgress[id] = {
+      contentVersion: TRAINING_CONTENT_VERSION,
+      tasks: { listen: false, shadow: false, words: false, speak: false, quiz: false },
+      createdAt: existing?.createdAt || new Date().toISOString(),
+      resetAt: existing ? new Date().toISOString() : "",
+    };
+    saveState(state);
   }
   return state.training.dayProgress[id];
 }
@@ -1379,12 +1401,12 @@ function completeDay() {
     const alreadyLogged = state.training.minimumLog.includes(today);
     if (!alreadyLogged) {
       state.training.minimumLog.push(today);
-      state.stats.totalMinutes += 10;
-      state.stats.xp += 10;
+      state.stats.totalMinutes += 15;
+      state.stats.xp += 15;
     }
     markStudyDate(state, today);
     saveState(state);
-    toast(alreadyLogged ? "今天的 10 分钟已经记录过了" : "今天的 10 分钟已记录，节奏没有断 🌱");
+    toast(alreadyLogged ? "今天的精简训练已经记录过了" : "15 分钟精简训练已记录 🌱");
     return;
   }
   if (state.training.completedDays.includes(lesson.courseDay)) {
@@ -1777,6 +1799,8 @@ function normalizeText(value) {
 }
 
 function findWordExample(lesson, term) {
+  const card = lesson.words.find((item) => item.term === term);
+  if (card?.example) return card.example;
   const match = lesson.week.samples.find((sample) => sample.en.toLowerCase().includes(term.toLowerCase()));
   return match ? `${match.en} · ${match.zh}` : lesson.sample.en;
 }

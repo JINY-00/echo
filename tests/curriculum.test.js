@@ -21,11 +21,14 @@ test("三条路线都包含 12 周、60 个可用学习日", () => {
       assert.equal(lesson.dayNumber, day + 1);
       assert.equal(lesson.week.samples.length, 5);
       assert.ok(lesson.week.vocab.length >= 6);
-      assert.equal(lesson.words.length, 4);
-      assert.equal(lesson.quiz.length, 3);
-      assert.equal(lesson.listeningSet.length, 3);
-      assert.equal(lesson.shadowSamples.length, 3);
-      lesson.listeningSet.forEach((question) => assert.ok(question.answer >= 0 && question.answer < question.choices.length));
+      assert.equal(lesson.words.length, 8);
+      assert.equal(lesson.quiz.length, 10);
+      assert.equal(lesson.listeningSet.length, 6);
+      assert.equal(lesson.shadowSamples.length, 5);
+      lesson.listeningSet.forEach((question) => {
+        if (question.type === "choice") assert.ok(question.answer >= 0 && question.answer < question.choices.length);
+        else assert.ok(question.answerText.length > 0);
+      });
       assert.ok(lesson.sample.en.length > 8);
       for (const question of lesson.quiz) {
         if (question.type === "choice" && question.answer !== undefined) {
@@ -56,9 +59,9 @@ test("A1、A2、B1 会实际改变训练长度和词汇量", () => {
   const a1 = getLesson("daily", 0, "A1");
   const a2 = getLesson("daily", 0, "A2");
   const b1 = getLesson("daily", 0, "B1");
-  assert.equal(a1.words.length, 4);
-  assert.equal(a2.words.length, 5);
-  assert.equal(b1.words.length, 6);
+  assert.equal(a1.words.length, 8);
+  assert.equal(a2.words.length, 10);
+  assert.equal(b1.words.length, 12);
   assert.ok(a2.listening.text.length > a1.listening.text.length);
   assert.ok(b1.listening.text.length > a2.listening.text.length);
   assert.notEqual(a1.id, a2.id);

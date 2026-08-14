@@ -1,4 +1,4 @@
-const CACHE_NAME = "echo-v7-learning";
+const CACHE_NAME = "echo-v8-training";
 const CORE_FILES = ["./", "./manifest.webmanifest", "./icons/icon.svg", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png"];
 
 self.addEventListener("install", (event) => {

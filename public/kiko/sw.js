@@ -1,6 +1,6 @@
-const CACHE = "afterwork-rhythm-v1";
+const CACHE = "kiko-v2";
 const BASE = new URL(self.registration.scope).pathname;
-const APP_SHELL = [BASE, `${BASE}manifest.webmanifest`];
+const APP_SHELL = [BASE, `${BASE}manifest.webmanifest`, `${BASE}icon-192.png`, `${BASE}icon-512.png`];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(APP_SHELL)).catch(() => {}));

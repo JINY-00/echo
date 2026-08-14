@@ -208,8 +208,11 @@ export default function Home() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div>
-          <p className="eyebrow">下班后的成长计划</p>
+        <div className="header-copy">
+          <div className="brand-lockup">
+            <img src="./icon-192.png" alt="" width="38" height="38" />
+            <p className="eyebrow">Kiko</p>
+          </div>
           <h1>{tab === "today" ? "今天，也前进一点点" : tab === "week" ? "一周，有张有弛" : tab === "goals" ? "十二周，看见改变" : "停下来，才看得清"}</h1>
           <p className="date">{dateText}</p>
         </div>

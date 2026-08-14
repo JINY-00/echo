@@ -1,0 +1,21 @@
+{
+  "name": "Echo",
+  "short_name": "Echo",
+  "description": "手机端英语自学规划、打卡与专项训练工具。",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5fafa",
+  "theme_color": "#05abab",
+  "orientation": "portrait-primary",
+  "lang": "zh-CN",
+  "categories": ["education", "productivity"],
+  "icons": [
+    {
+      "src": "./icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

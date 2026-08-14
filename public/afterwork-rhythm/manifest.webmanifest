@@ -1,0 +1,11 @@
+{
+  "name": "下班后的成长计划",
+  "short_name": "成长计划",
+  "description": "日常学习、活动与休息打卡",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#f4f0e6",
+  "theme_color": "#f4f0e6",
+  "lang": "zh-CN"
+}
